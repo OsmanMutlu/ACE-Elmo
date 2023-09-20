@@ -1,10 +1,13 @@
+"""
+This is copied from AllenAI's CRF code found at https://github.com/allenai/allennlp/blob/master/allennlp/modules/conditional_random_field.py
+"""
+
 from typing import List, Optional, Union
 
 from torch.autograd import Variable
 import torch
 import torch.nn as nn
 
-# TODO: Give reference to original code
 class CRF(nn.Module):
     """Conditional random field.
     This module implements a conditional random field [LMP]. The forward computation

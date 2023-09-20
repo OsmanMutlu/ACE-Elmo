@@ -3,6 +3,7 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import json
 import random
+import pdb
 
 class AceData(Dataset):
     """"""
@@ -24,7 +25,7 @@ class AceData(Dataset):
         # events = ex["events"]
         # labels = ex["labels"]
 
-        # sentence, events, doc_id
+        # sentence, events, sent_start_idx, doc_id
         return ex[0], ex[1], ex[2]
 
 class ConllData(Dataset):
@@ -164,6 +165,7 @@ def prepare_examples(examples):
     for ex in examples:
         doc_id = ex["doc_id"]
         sentences = ex["words"]
+        sent_lengths = [len(sent) for sent in sentences]
         events = ex["events"]
         # labels = ex["labels"]
 
@@ -171,20 +173,20 @@ def prepare_examples(examples):
         events_data = {}
         for i,event in enumerate(events):
             # event["sent_idx"] are zero-ordered
-            # start-end indexes are document beggining oriented instead of sentence beginning. -> Need to normalize. -> TODO: fix these in json files we read
 
             # Sentence index, (Start-end index, event_type:event_subtype)
             # sentence index needed for ordering later
-            trigger = ((event["trigger"]["start"], event["trigger"]["end"]),
+
+            # start-end indexes are document beggining oriented instead of sentence beginning. -> Need to normalize.
+            offset = sum(sent_lengths[:event["sent_idx"]]) + 1 # sum all sentence lengths up to this sentence to normalize offsets. +1 is needed for every offset -> I forgot why this happens
+            trigger = ((event["trigger"]["start"] - offset , event["trigger"]["end"] - offset),
                        event["event_type"] + ":" + event["event_subtype"])
 
-            # TODO: if we compare event_label's of arguments, we need to add them to predicted arguments somehow
-            # TODO: maybe for predicted, assign the first entity to it
             arguments = []
             for arg in event["arguments"]:
                 # list of ((start, end), trigger_label, role)
                 # only need trigger label to compare -> referred in function invert_arguments in https://github.com/dwadden/dygiepp/blob/master/dygie/training/event_metrics.py
-                arguments.append(((arg["start"], arg["end"]), trigger[1], arg["role"]))
+                arguments.append(((arg["start"] - offset, arg["end"] - offset), trigger[1], arg["role"]))
 
             if event["sent_idx"] in events_data.keys():
                 new_events = [events_data[event["sent_idx"]][0] + [trigger],
@@ -198,11 +200,11 @@ def prepare_examples(examples):
 
     return all_examples
 
+# Need to adjust to doc and sent level
 def ace_collate(batch):
     sentences = [item[0] for item in batch]
     events = [item[1] for item in batch]
     doc_ids = [item[2] for item in batch]
-    # # TODO: Consider what to do with these
     # labels = [item[3] for item in batch] # doc labels
 
     return sentences, events, doc_ids
@@ -214,10 +216,18 @@ def get_dataloaders(args):
 
     train = DataLoader(dataset=ConllData(examples), batch_size=args.train_batch_size,
                        shuffle=True, collate_fn=lambda x: conll_collate(x, doc_level=args.doc_level))
-    dev = DataLoader(dataset=AceData(args.dev_filename), batch_size=args.eval_batch_size,
-                     collate_fn=ace_collate)
-    test = DataLoader(dataset=AceData(args.test_filename), batch_size=args.eval_batch_size,
-                      collate_fn=ace_collate)
+    # dev = DataLoader(dataset=AceData(args.dev_filename), batch_size=args.eval_batch_size,
+    #                  collate_fn=ace_collate)
+    # test = DataLoader(dataset=AceData(args.test_filename), batch_size=args.eval_batch_size,
+    #                   collate_fn=ace_collate)
+
+    dev_examples, _ = read_conll(args.dev_filename, doc_level=args.doc_level)
+    test_examples, _ = read_conll(args.test_filename, doc_level=args.doc_level)
+
+    dev = DataLoader(dataset=ConllData(dev_examples), batch_size=args.eval_batch_size,
+                       shuffle=True, collate_fn=lambda x: conll_collate(x, doc_level=args.doc_level))
+    test = DataLoader(dataset=ConllData(test_examples), batch_size=args.eval_batch_size,
+                       shuffle=True, collate_fn=lambda x: conll_collate(x, doc_level=args.doc_level))
 
     return train, dev, test, label_to_id
     # return train, label_to_id
